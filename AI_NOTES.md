@@ -56,13 +56,24 @@ Claude (claude-sonnet-4-6) via Cowork — Anthropic's desktop agentic coding too
 10. **NSF notification hook**
     > "Can you put the section as comments where a message can be sent to the property manager if collection is returned (NSF)?"
 
-    Claude added TODO comment blocks in three locations in `rent-collections.service.ts`: the webhook path, the reconciliation path, and inside `applyTransition()` as a general domain-event hook point. Each comment includes working pseudocode for the notification call and explains why the notification must be sent outside the DB transaction to avoid rolling back the state change on a failed email delivery.
+    Claude initially added TODO comment blocks in three separate locations: the webhook path, the reconciliation path, and inside `applyTransition()`. Each block said roughly the same thing in different words — duplicated guidance scattered across the file.
+
+11. **Refactor notifications into a shared service**
+    > "Instead of having the NSF notification hook in three locations, why not have a common service where the three applyTransition events can be implemented instead of repeating code in the 3 places?"
+
+    This was the right architectural challenge. Claude created a dedicated `NotificationsService` with a single `onTransition(collection, fromStatus, toStatus, source)` entry point, registered it in the module, injected it into `RentCollectionsService`, and called it once at the end of `applyTransition()` — the one method all three paths flow through. The three scattered TODO blocks were removed entirely. The service routes by `toStatus` to specific handlers (`notifyNSF`, `notifyFunded`, `notifyFailed`), each with a stub log line and a full implementation guide in the comments.
 
 ---
 
 ## Moments the AI was wrong or incomplete
 
-**1. Webhook deduplication test assertion (caught during initial build)**
+**1. Duplicated notification logic across three call sites (caught during code review)**
+
+When asked to add NSF notification hooks, Claude placed identical TODO comment blocks in three separate locations — `handleWebhook`, `reconcileSubmitted`, and `applyTransition`. This was the wrong instinct: `applyTransition` is already the single choke point for every status change, so placing hooks in the two callers as well was redundant and would have created a maintenance problem (three places to update when the real delivery mechanism is wired in).
+
+I caught this by pointing out the duplication directly. The correct solution was to create a `NotificationsService`, inject it into `RentCollectionsService`, and call it once inside `applyTransition` — covering all three paths automatically without any of them needing to know about notifications.
+
+**2. Webhook deduplication test assertion (caught during initial build)**
 
 When asked for the webhook deduplication test, Claude initially suggested checking `em.save` call count to verify deduplication — reasoning that a duplicate event would call `save` fewer times. The problem: `save` is also called for audit rows, so the count varies by how many audit rows the rejected path writes. The assertion would have been fragile and wrong in some branches.
 

@@ -7,6 +7,7 @@ import { VopayMockClient } from './providers/vopay-mock.client';
 import { VOPAY_CLIENT } from './providers/vopay-client.interface';
 import { RentCollectionsController } from './rent-collections.controller';
 import { RentCollectionsService } from './rent-collections.service';
+import { NotificationsService } from './notifications.service';
 import { WebhooksController } from './webhooks.controller';
 
 @Module({
@@ -20,6 +21,7 @@ import { WebhooksController } from './webhooks.controller';
   controllers: [RentCollectionsController, WebhooksController],
   providers: [
     RentCollectionsService,
+    NotificationsService,
     {
       // Swap VopayMockClient for a real HTTP client in production via env flag.
       provide: VOPAY_CLIENT,

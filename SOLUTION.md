@@ -7,6 +7,7 @@ A self-contained NestJS module (`RentCollectionsModule`) that:
 1. Initiates rent collections against a mocked VOPay EFT rail
 2. Processes async settlement webhooks with signature verification and replay safety
 3. Reconciles stale collections by polling the provider
+4. Notifies stakeholders on key settlement outcomes via a centralised `NotificationsService`
 
 ---
 
@@ -81,6 +82,22 @@ In production this would run as a scheduled job (e.g. every 5 minutes via NestJS
 
 ---
 
+## Notifications
+
+`NotificationsService` is the single point of contact for all outbound alerts triggered by settlement outcomes. It is called from `applyTransition()` — the one method every status change flows through — so the webhook path, the reconciliation path, and the API path all trigger notifications automatically without any duplicated logic.
+
+The service routes on `toStatus`:
+
+| Status     | Notification                                                                 |
+|------------|------------------------------------------------------------------------------|
+| `RETURNED` | NSF alert to property manager (email / SMS / Slack — stub with TODO)         |
+| `FUNDED`   | Receipt confirmation / ledger entry (stub with TODO)                         |
+| `FAILED`   | Hard-failure alert to property manager to investigate tenant banking details |
+
+**Key design decision**: the notification call is placed *after* the DB save, outside the transaction. A failed email delivery cannot roll back the state change. For guaranteed delivery in production, `notifyNSF` should enqueue a Bull/BullMQ job rather than call the delivery service directly — the worker retries on failure independently of the main request.
+
+---
+
 ## Trade-offs and what I'd do with more time
 
 **`accountRef` lookup**: the spec says `initiateDebit` needs an `accountRef` (the tenant's bank account reference). The input DTO doesn't include it — in a real system this comes from an Accounts/Tenants service. I used `leaseId` as a stand-in and called it out here. With more time I'd add a `BankAccountsService` lookup or accept `accountRef` in the DTO.
@@ -92,6 +109,8 @@ In production this would run as a scheduled job (e.g. every 5 minutes via NestJS
 **`orIgnore()` vs `upsert()`**: TypeORM's `orIgnore()` maps to `ON CONFLICT DO NOTHING`. I chose this over `upsert` because I don't want to overwrite `amountCents` or `status` on a duplicate — the existing record wins.
 
 **Integration tests**: the unit tests mock TypeORM extensively. I'd add integration tests with a real Postgres (via `pg-mem` or Testcontainers) for the concurrent initiation path — that's the one scenario where mock behaviour diverges most from reality.
+
+**Notification delivery**: `NotificationsService` is currently a stub that logs to console. In production each method would be backed by a real delivery mechanism (SendGrid, Twilio, Slack Web API) and wrapped in a Bull/BullMQ job queue for at-least-once delivery with retries.
 
 **Auth**: skipped per spec. In production, the `/rent-collections` endpoints need tenant-scoped JWT auth; the `/webhooks/vopay` endpoint needs IP allowlisting in addition to HMAC.
 

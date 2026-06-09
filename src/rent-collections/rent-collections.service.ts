@@ -1,5 +1,4 @@
 import {
-  ConflictException,
   Inject,
   Injectable,
   Logger,
@@ -17,6 +16,7 @@ import {
   VOPAY_CLIENT,
   VopayClient,
 } from './providers/vopay-client.interface';
+import { NotificationsService } from './notifications.service';
 
 /** How old a SUBMITTED/INITIATING record must be before reconciliation touches it. */
 const STALE_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
@@ -35,6 +35,7 @@ export class RentCollectionsService {
     private readonly dataSource: DataSource,
     @Inject(VOPAY_CLIENT)
     private readonly vopay: VopayClient,
+    private readonly notifications: NotificationsService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -256,39 +257,6 @@ export class RentCollectionsService {
       this.logger.log(
         `Collection ${collection.id} transitioned to ${targetStatus} via webhook ${payload.eventId}`,
       );
-
-      // ── TODO: NSF / RETURNED notification (webhook path) ──────────────────
-      // When a previously-funded collection bounces back (NSF), the property
-      // manager needs to know immediately so they can follow up with the tenant.
-      //
-      // Suggested implementation:
-      //
-      //   if (targetStatus === CollectionStatus.RETURNED) {
-      //     await this.notificationsService.notifyPropertyManager({
-      //       event:       'RENT_COLLECTION_RETURNED',
-      //       leaseId:     collection.leaseId,
-      //       period:      collection.period,
-      //       amountCents: collection.amountCents,
-      //       currency:    collection.currency,
-      //       occurredAt:  payload.occurredAt,
-      //       message:     `Rent collection for lease ${collection.leaseId} ` +
-      //                    `(${collection.period}) was returned NSF. ` +
-      //                    `Amount: ${collection.currency} ${(collection.amountCents / 100).toFixed(2)}.`,
-      //     });
-      //   }
-      //
-      // Options for NotificationsService delivery:
-      //   • Email  — nodemailer / SendGrid / AWS SES
-      //   • SMS    — Twilio
-      //   • Push   — Firebase / OneSignal
-      //   • Slack  — Slack Web API (webhook to #property-managers channel)
-      //
-      // The notification should be sent OUTSIDE this DB transaction (or queued)
-      // so a failed email delivery does not roll back the RETURNED state.
-      // A Bull/BullMQ job queue (Redis-backed) is the recommended pattern:
-      //   emit a CollectionReturnedEvent here, process the notification in a
-      //   separate worker that retries on failure.
-      // ───────────────────────────────────────────────────────────────────────
     });
   }
 
@@ -392,17 +360,6 @@ export class RentCollectionsService {
         'reconciliation',
         `Resolved via polling: provider status=${providerResult.status}`,
       );
-
-      // ── TODO: NSF / RETURNED notification (reconciliation path) ───────────
-      // Reconciliation can also discover a RETURNED status when a webhook was
-      // lost. The same property-manager notification applies here.
-      //
-      //   if (targetStatus === CollectionStatus.RETURNED) {
-      //     await this.notificationsService.notifyPropertyManager({ ... });
-      //   }
-      //
-      // See the webhook path above for the full implementation sketch.
-      // ───────────────────────────────────────────────────────────────────────
     });
   }
 
@@ -438,40 +395,13 @@ export class RentCollectionsService {
       }),
     );
 
-    // ── TODO: Domain event emission (general hook point) ────────────────────
-    // applyTransition() is the single choke point for every status change.
-    // This makes it the right place to emit domain events that other parts of
-    // the system (notifications, ledger updates, analytics) can subscribe to.
-    //
-    // Example using NestJS EventEmitter2:
-    //
-    //   this.eventEmitter.emit(`collection.${toStatus}`, {
-    //     collectionId: collection.id,
-    //     leaseId:      collection.leaseId,
-    //     period:       collection.period,
-    //     amountCents:  collection.amountCents,
-    //     currency:     collection.currency,
-    //     fromStatus,
-    //     toStatus,
-    //     source,
-    //   });
-    //
-    // Listeners then handle their own concerns independently:
-    //
-    //   @OnEvent('collection.returned')
-    //   async handleReturned(event: CollectionReturnedEvent) {
-    //     await this.notificationsService.notifyPropertyManager(event);
-    //     await this.ledgerService.reverseEntry(event);
-    //   }
-    //
-    //   @OnEvent('collection.funded')
-    //   async handleFunded(event: CollectionFundedEvent) {
-    //     await this.ledgerService.recordReceipt(event);
-    //   }
-    //
-    // IMPORTANT: emit the event AFTER the DB transaction commits, not inside it.
-    // If the notification fails, you do not want to roll back the state change.
-    // Use a Bull/BullMQ job queue for guaranteed at-least-once delivery.
+    // ── Notifications ────────────────────────────────────────────────────────
+    // Centralised here so webhook, reconciliation, and API paths all trigger
+    // the same notifications without any duplicated logic. NotificationsService
+    // routes to the correct handler (NSF alert, funded receipt, failed alert)
+    // based on toStatus. It is called after the DB save so a failed notification
+    // never rolls back the state transition.
+    await this.notifications.onTransition(collection, fromStatus, toStatus, source);
     // ─────────────────────────────────────────────────────────────────────────
   }
 }

@@ -446,7 +446,6 @@ describe('RentCollectionsService', () => {
         makeWebhookEventsRepo() as any,
         ds,
         makeVopay() as any,
-        mockNotifications,
       );
 
       // Should NOT throw — webhook must always be acknowledged 200 OK
@@ -497,7 +496,6 @@ describe('RentCollectionsService', () => {
         makeWebhookEventsRepo() as any,
         ds,
         makeVopay() as any,
-        mockNotifications,
       );
 
       await service.handleWebhook(payload);
@@ -591,7 +589,6 @@ describe('RentCollectionsService', () => {
         makeWebhookEventsRepo() as any,
         makeDataSource(lockEm),
         vopay as any,
-        mockNotifications,
       );
 
       const result = await service.reconcile();
@@ -620,7 +617,6 @@ describe('RentCollectionsService', () => {
         makeWebhookEventsRepo() as any,
         makeDataSource(makeEntityManager()) as any,
         vopay as any,
-        mockNotifications,
       );
 
       const result = await service.reconcile();
