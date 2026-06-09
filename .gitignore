@@ -1,0 +1,9 @@
+node_modules/
+dist/
+coverage/
+
+# Environment — never commit real credentials
+.env
+
+# TypeScript build info
+*.tsbuildinfo
