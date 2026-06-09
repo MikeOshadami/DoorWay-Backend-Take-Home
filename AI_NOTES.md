@@ -33,13 +33,48 @@ Claude (claude-sonnet-4-6) via Cowork — Anthropic's desktop agentic coding too
 
    Claude correctly flagged that `===` is vulnerable to timing attacks on the hex strings, and suggested `crypto.timingSafeEqual` on `Buffer.from(sig, 'hex')`. I used this directly.
 
+6. **Run and test instructions**
+   > "How do I run it and test myself?"
+
+   Claude provided curl examples for every endpoint and the full setup flow. I then asked it to put this into a README file, which it created with setup steps, the env variable table, and signed webhook examples.
+
+7. **Environment variable management**
+   > "Put the db parameters in an env file so it can be easily updated from there."
+
+   Claude created `.env`, `.env.example`, and updated `app.module.ts` to use `ConfigModule` + `ConfigService`. However, the initial pass missed `DB_TYPE` — it hardcoded `type: 'postgres'` in the TypeORM config instead of reading it from the env file. I caught this and asked why it wasn't in the env too, and it was added as a follow-up.
+
+8. **Missing data-source.ts**
+   > "Why is there no data-source.ts?"
+
+   The README referenced `src/data-source.ts` in the migration command but the file was never created. Claude had overlooked it entirely during initial scaffolding. I caught the gap and it was created — a standalone TypeORM DataSource that reads from `.env` via `dotenv` so the TypeORM CLI works without a running NestJS app. Two npm scripts (`migration:run`, `migration:revert`) were also added to `package.json` to simplify the command.
+
+9. **Interview preparation document**
+   > "Can you give me a document that explains how the entire system works so I can use it to prepare for an interview?"
+
+   Claude generated a formatted Word document (.docx) covering: system overview, database design, state machine, idempotency layers, webhook handling, reconciliation, configuration, test coverage, and a Q&A section with 13 likely interview questions and prepared answers.
+
+10. **NSF notification hook**
+    > "Can you put the section as comments where a message can be sent to the property manager if collection is returned (NSF)?"
+
+    Claude added TODO comment blocks in three locations in `rent-collections.service.ts`: the webhook path, the reconciliation path, and inside `applyTransition()` as a general domain-event hook point. Each comment includes working pseudocode for the notification call and explains why the notification must be sent outside the DB transaction to avoid rolling back the state change on a failed email delivery.
+
 ---
 
-## One moment the AI was wrong
+## Moments the AI was wrong or incomplete
 
-When I asked for the webhook deduplication test, Claude initially suggested checking `em.save` call count to verify deduplication — reasoning that a duplicate event would call `save` fewer times. The problem: `save` is also called for audit rows, so the count varies by how many audit rows the rejected path writes. The assertion would have been fragile and wrong in some branches.
+**1. Webhook deduplication test assertion (caught during initial build)**
 
-I caught this by tracing through the actual code path: on a duplicate eventId, the handler returns before calling `em.getRepository(RentCollection).findOne` at all. The correct assertion is that `findOne` is only called once across two webhook deliveries — that's the precise proof that the second delivery short-circuited. I rewrote the test accordingly.
+When asked for the webhook deduplication test, Claude initially suggested checking `em.save` call count to verify deduplication — reasoning that a duplicate event would call `save` fewer times. The problem: `save` is also called for audit rows, so the count varies by how many audit rows the rejected path writes. The assertion would have been fragile and wrong in some branches.
+
+The correct assertion is that `findOne` is only called once across two webhook deliveries — that is the precise proof that the second delivery short-circuited. I rewrote the test accordingly.
+
+**2. DB_TYPE missing from .env (caught during env file setup)**
+
+When asked to move DB parameters to an `.env` file, Claude moved `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASS`, and `DB_NAME` but left `type: 'postgres'` hardcoded in `app.module.ts`. This is inconsistent — if someone swaps to a different database driver, they would need to edit code rather than just the env file. I caught this and asked why it was not in the env too; it was corrected by adding `DB_TYPE=postgres` to `.env` and reading it via `ConfigService`.
+
+**3. data-source.ts never created (caught during README review)**
+
+The README's migration section referenced `src/data-source.ts` in the CLI command, but that file was never generated during the initial scaffolding. The TypeORM CLI requires a standalone DataSource export to run migrations outside of the NestJS runtime. Claude missed this entirely — it wrote the migration file and the README instruction but not the file that makes the instruction actually work. I caught the gap by asking directly, and the file was created.
 
 ---
 
